@@ -303,9 +303,16 @@ let liveStopwatchTimer = null;
 // back up. Each is null until a real gap is detected (see makeRecoveryTracker in server.js), so
 // a fully transparent cutover with no observed interruption reports that explicitly rather than
 // showing a misleadingly precise "0.0s".
-function fmtMilestone(ts, op) {
+//
+// `stillRecovering` (live health, computed fresh every poll -- see computeHealth()) disambiguates
+// the two reasons ts can be null once the op itself is done: a genuinely seamless cutover (health
+// is "ok", so "no interruption observed" is accurate) vs. the control plane reporting done before
+// the Kafka client has actually reconnected (health still shows "retrying", so the real resume
+// time just hasn't happened yet) -- without this, the milestone would flip straight from
+// "awaiting…" to a premature, wrong "no interruption observed" the instant the stopwatch stops.
+function fmtMilestone(ts, op, stillRecovering) {
   if (ts) return ((ts - op.startedAt) / 1000).toFixed(1) + "s";
-  if (op.inProgress) return "awaiting…";
+  if (op.inProgress || stillRecovering) return "awaiting…";
   if (op.startedAt) return "no interruption observed";
   return "—";
 }
@@ -314,7 +321,7 @@ function fmtMilestone(ts, op) {
 function fmtSyncMilestone(ts, op) {
   const isUnplanned = op.action === "failover-unplanned" || op.action === "failback-unplanned";
   if (!ts && !op.inProgress && op.startedAt && isUnplanned) return "pending — run Restore to resync";
-  return fmtMilestone(ts, op);
+  return fmtMilestone(ts, op, false);
 }
 
 function renderClusterPartitions(el, snap, label) {
@@ -390,8 +397,15 @@ async function refresh() {
     sw.textContent = "—";
     swAwaiting.textContent = "";
   }
-  document.getElementById("milestone-producer").textContent = fmtMilestone(s.failoverOp.producerRecoveredAt, s.failoverOp);
-  document.getElementById("milestone-consumer").textContent = fmtMilestone(s.failoverOp.consumerRecoveredAt, s.failoverOp);
+  // Computed early (before the status panels below normally would) because the milestone fields
+  // above need to know whether producer/consumer health is still "retrying" right now -- see the
+  // comment on fmtMilestone().
+  const expectedGapMs = 1000 / (s.producePerSec || 10);
+  const pHealth = computeHealth(s.producer.connected, s.producer.consecutiveFailures, s.producer.lastError, s.producer.lastSuccessAt, s.producer.connectedAt, expectedGapMs, s.now);
+  const cHealth = computeHealth(s.consumer.connected, s.consumer.consecutiveFailures, s.consumer.lastError, s.consumer.lastReceivedAt, s.consumer.connectedAt, expectedGapMs, s.now);
+
+  document.getElementById("milestone-producer").textContent = fmtMilestone(s.failoverOp.producerRecoveredAt, s.failoverOp, pHealth.cls !== "ok");
+  document.getElementById("milestone-consumer").textContent = fmtMilestone(s.failoverOp.consumerRecoveredAt, s.failoverOp, cHealth.cls !== "ok");
   document.getElementById("milestone-sync").textContent = fmtSyncMilestone(s.failoverOp.syncRestoredAt, s.failoverOp);
 
   // Failover/fail-back (planned or unplanned) are only valid from READY_TO_FAILOVER; after an
@@ -405,10 +419,8 @@ async function refresh() {
   document.getElementById("btn-failback-unplanned").disabled = !canFailover || servingSide === "primary";
   document.getElementById("btn-restore").disabled = !canRestore;
 
-  // Producer
+  // Producer (pHealth computed above, alongside the milestone fields)
   const p = s.producer;
-  const expectedGapMs = 1000 / (s.producePerSec || 10);
-  const pHealth = computeHealth(p.connected, p.consecutiveFailures, p.lastError, p.lastSuccessAt, p.connectedAt, expectedGapMs, s.now);
   document.getElementById("dot-producer").className = "dot " + (!p.running ? "unknown" : pHealth.cls === "down" ? "down" : pHealth.cls === "warn" ? "warn" : "up");
   document.getElementById("producer-status").textContent = p.running ? "running" : "stopped";
   document.getElementById("producer-sent").textContent = fmt(p.sentTotal);
@@ -417,9 +429,8 @@ async function refresh() {
   pHealthEl.textContent = pHealth.text;
   pHealthEl.className = "num health-" + pHealth.cls;
 
-  // Consumer
+  // Consumer (cHealth computed above, alongside the milestone fields)
   const c = s.consumer;
-  const cHealth = computeHealth(c.connected, c.consecutiveFailures, c.lastError, c.lastReceivedAt, c.connectedAt, expectedGapMs, s.now);
   document.getElementById("dot-consumer").className = "dot " + (!c.running ? "unknown" : cHealth.cls === "down" ? "down" : cHealth.cls === "warn" ? "warn" : "up");
   document.getElementById("consumer-status").textContent = c.running ? "running" : "stopped";
   document.getElementById("consumer-received").textContent = fmt(c.receivedTotal);

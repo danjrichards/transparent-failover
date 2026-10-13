@@ -15,18 +15,18 @@ A full, worked example of how this was built — every command, in order — is 
 ```
  Confluent Cloud environment
  ┌────────────────────────────────────┐        ┌────────────────────────────────────┐
- │ primary cluster (DEDICATED)          │        │ dr cluster (DEDICATED)               │
- │ westeurope                              │        │ northeurope                             │
- │ + a sample producer/connector             │        │                                      │
+ │ primary cluster (DEDICATED)        │        │ DR cluster (DEDICATED)             │
+ │ westeurope                         │        │ northeurope                        │
+ │ + a sample producer/connector      │        │                                    │
  └──────────────────┬─────────────────┘        └──────────────────┬─────────────────┘
-                    │ Azure Private Link (classic model: one Confluent "network" per           │
-                    │ cluster, 3 zonal Private Endpoints each, matching the network's           │
-                    │ own dns_domain directly)                                                  │
+                    │.                                            │  Azure Private Link (classic model: one Confluent "network" per
+                    │.                                            │  cluster, 3 zonal Private Endpoints each, matching the network's
+                    │.                                            │  own dns_domain directly)
  ┌──────────────────▼─────────────────┐        ┌──────────────────▼─────────────────┐
- │ primary-vnet                          │◄──────►│ dr-vnet                               │
- │ westeurope · 10.20.0.0/16               │  VNet  │ northeurope · 10.21.0.0/16              │
- │ privatelink-subnet: 3 zonal PEs          │peering│ privatelink-subnet: 3 zonal PEs          │
- │ vm-subnet 10.20.0.0/24 (unused)            │        │ vm-subnet 10.21.0.0/24 ◄── VM here         │
+ │ primary-vnet                       │◄──────►│ dr-vnet                            │
+ │ westeurope · 10.20.0.0/16          │  VNet  │ northeurope · 10.21.0.0/16         │
+ │ privatelink-subnet: 3 zonal PEs    │peering │ privatelink-subnet: 3 zonal PEs    │
+ │ vm-subnet 10.20.0.0/24 (unused)    │        │ vm-subnet 10.21.0.0/24 ◄── VM here │
  └────────────────────────────────────┘        └────────────────────────────────────┘
                                                                  │
                                                        jump-box VM (Standard_B1s, Ubuntu 22.04)

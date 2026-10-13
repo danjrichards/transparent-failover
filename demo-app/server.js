@@ -57,26 +57,55 @@ const failoverOp = {
   syncRestoredAt: null,
 };
 
-// Detects "the first successful send/receive after a real gap", not just "the first one after
-// the op started" -- a graceful PLANNED cutover often has no gap at all (recoveredAt stays null,
-// which the UI reports as "no interruption observed"). Call poll() on a steady cadence; it reads
-// the live timestamp off producer/consumer state each time rather than trusting error flags,
-// because librdkafka buffers/retries sends below the JS promise layer and never surfaces a
+// Detects "a successful send/receive following a real gap" -- a graceful PLANNED cutover often
+// has no gap at all (poll() returns null, which the UI reports as "no interruption observed").
+// Reads the live timestamp off producer/consumer state each time rather than trusting error
+// flags, because librdkafka buffers/retries sends below the JS promise layer and never surfaces a
 // transient outage as a rejection -- see the comment on computeHealth() in index.html.
+//
+// Returns the recovery timestamp only on the poll() call where it's first detected (not sticky),
+// so the same tracker can keep reporting fresh recoveries indefinitely -- this one runs
+// continuously for the app's whole lifetime (see pollRecoveryTrackers()), not just while a
+// particular failover op's watchForCompletion() loop happens to still be running. The control
+// plane can report an op "done" well before the Kafka client's own reconnect/metadata-refresh
+// delay actually clears, so a tracker scoped to that loop would miss recoveries that land after
+// completion -- exactly the mismatch where the live health badge still says "retrying" after the
+// stopwatch has already frozen.
 function makeRecoveryTracker(getLastAt, expectedGapMs) {
   let prev = null;
-  let recoveredAt = null;
   const threshold = Math.max(expectedGapMs * 8, 3000);
   return function poll() {
     const cur = getLastAt();
+    let recoveredAt = null;
     if (cur != null) {
-      if (prev != null && recoveredAt == null && cur - prev > threshold) {
+      if (prev != null && cur - prev > threshold) {
         recoveredAt = cur;
       }
       prev = cur;
     }
     return recoveredAt;
   };
+}
+
+const expectedGapMs = 1000 / (cfg.producePerSec || 10);
+const producerTracker = makeRecoveryTracker(() => producer.state.lastSuccessAt, expectedGapMs);
+const consumerTracker = makeRecoveryTracker(() => consumer.state.lastReceivedAt, expectedGapMs);
+
+// Runs for the app's whole lifetime, independent of any one failover op's lifecycle -- see the
+// comment on makeRecoveryTracker() above for why. Only latches a detected recovery onto the
+// *current* failoverOp if it happened at or after that op's trigger and hasn't already been
+// recorded, so a recovery left over from a previous op (or app startup) is never misattributed.
+function pollRecoveryTrackers() {
+  const producerRecoveredAt = producerTracker();
+  if (producerRecoveredAt && failoverOp.startedAt && producerRecoveredAt >= failoverOp.startedAt && !failoverOp.producerRecoveredAt) {
+    failoverOp.producerRecoveredAt = producerRecoveredAt;
+    events.log('ok', `Producers resumed sending (${((producerRecoveredAt - failoverOp.startedAt) / 1000).toFixed(1)}s after trigger)`);
+  }
+  const consumerRecoveredAt = consumerTracker();
+  if (consumerRecoveredAt && failoverOp.startedAt && consumerRecoveredAt >= failoverOp.startedAt && !failoverOp.consumerRecoveredAt) {
+    failoverOp.consumerRecoveredAt = consumerRecoveredAt;
+    events.log('ok', `Consumers resumed receiving (${((consumerRecoveredAt - failoverOp.startedAt) / 1000).toFixed(1)}s after trigger)`);
+  }
 }
 
 // Which side is safe to treat as "active" right now, derived ONLY from the Switchover
@@ -112,6 +141,8 @@ async function pollOnce() {
 function startPolling() {
   pollOnce();
   setInterval(pollOnce, 1500);
+  pollRecoveryTrackers();
+  setInterval(pollRecoveryTrackers, 1000);
 }
 
 // The Metrics API samples every 60s server-side, so polling any faster than that would just
@@ -172,23 +203,13 @@ function standbyClusterIdForOp(targetSide) {
 async function watchForCompletion(action, targetSide) {
   const isRestore = action === 'restore';
   const deadline = Date.now() + 120000; // safety cap
-  const expectedGapMs = 1000 / (cfg.producePerSec || 10);
-  const producerTracker = makeRecoveryTracker(() => producer.state.lastSuccessAt, expectedGapMs);
-  const consumerTracker = makeRecoveryTracker(() => consumer.state.lastReceivedAt, expectedGapMs);
+  // Producer/consumer recovery is tracked by the always-on pollRecoveryTrackers() loop (see
+  // above), not scoped to this function -- it needs to keep watching even after this loop below
+  // returns, since the control plane can report "done" before the Kafka client has actually
+  // finished reconnecting.
   const standbyClusterId = standbyClusterIdForOp(targetSide);
   let tick = 0;
   while (Date.now() < deadline) {
-    const producerRecoveredAt = producerTracker();
-    if (producerRecoveredAt && !failoverOp.producerRecoveredAt) {
-      failoverOp.producerRecoveredAt = producerRecoveredAt;
-      events.log('ok', `Producers resumed sending (${((producerRecoveredAt - failoverOp.startedAt) / 1000).toFixed(1)}s after trigger)`);
-    }
-    const consumerRecoveredAt = consumerTracker();
-    if (consumerRecoveredAt && !failoverOp.consumerRecoveredAt) {
-      failoverOp.consumerRecoveredAt = consumerRecoveredAt;
-      events.log('ok', `Consumers resumed receiving (${((consumerRecoveredAt - failoverOp.startedAt) / 1000).toFixed(1)}s after trigger)`);
-    }
-
     // Mirror lag is only sampled once a minute server-side, but we poll it every ~5s here (far
     // more often than the once-a-minute background poll) purely to catch the new sample as soon
     // as the Metrics API has it -- the milestone timestamp used is the sample's own embedded
