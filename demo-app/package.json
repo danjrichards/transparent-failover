@@ -1,0 +1,14 @@
+{
+  "name": "danr-tf-demo-app",
+  "version": "1.0.0",
+  "description": "Transparent failover demo: producer + consumer + live dashboard with a failover trigger",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "@confluentinc/kafka-javascript": "^1.11.0"
+  }
+}
