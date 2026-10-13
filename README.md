@@ -202,10 +202,6 @@ their configuration across a failover, a single-page dashboard, and buttons that
 failovers. Deploy it as a systemd service on your jump-box VM (the only place with private network
 access to the clusters).
 
-> Built against `@confluentinc/kafka-javascript` rather than plain `kafkajs` since it's Confluent's
-> own client; its KafkaJS-compatible API surface is close but not identical to real kafkajs — see
-> "Migrating to `@confluentinc/kafka-javascript`" below for the differences that came up.
-
 ### What it does
 
 - **Producer**: a configurable rate (default 10 msg/s) to a topic, via the **global bootstrap
@@ -266,26 +262,6 @@ systemd service (also not committed, `chmod 600`).
   loss (producer's sent count exactly matched consumer's received count across repeated test
   failovers/failbacks). See "Why does an UNPLANNED failover take ~1 minute?" below for a detailed
   breakdown of where that time actually goes.
-
-### Migrating to `@confluentinc/kafka-javascript`
-
-If you're porting a plain-`kafkajs` app, these are the API differences that came up:
-
-- **A prebuilt native binary exists for Linux x64** (librdkafka under the hood) — install on a
-  Linux VM is fast with no compiler needed; an install on macOS arm64 may fall back to compiling
-  librdkafka from source.
-- **KafkaJS-specific options must nest under a `kafkaJS: {}` block** in the constructor and in
-  `.producer()`/`.consumer()` calls — anything at the top level is instead treated as a native
-  librdkafka global config key, and a plain kafkajs-style `new Kafka({ clientId, brokers, ... })`
-  throws immediately.
-- **`retry.factor`/`retry.multiplier` aren't supported** — librdkafka handles backoff internally.
-- **`fromBeginning` must be set on the consumer at creation** (`kafka.consumer({ kafkaJS: {
-  fromBeginning: false } })`), not passed to `.subscribe()`.
-- **`consumer.events`/`consumer.on(...)` isn't implemented** — there's no kafkajs-style `CRASH`
-  event; track failures via a `try/catch` inside `eachMessage` instead.
-- **No `admin.describeCluster()`** — use `admin.clusterId()` instead.
-- **Every client needs its own explicit `logLevel: logLevel.NOTHING`** — left unset, each client
-  logs connection/telemetry noise to stdout.
 
 ### Customer-facing visibility: REST calls and metrics
 
@@ -352,45 +328,6 @@ instantly to the broker's own state change, and the pair isn't reported "done" u
 cluster members have independently reported their side of the operation complete. If you're
 investigating similar latency, broker logs (filtered to your cluster IDs) around a trigger will
 show the gap between the link-state flip and the completion status write.
-
-### Critical stability bug found after migrating (and the real fix)
-
-An early version of this app re-created a fresh native Kafka admin client on every dashboard poll
-(every 1.5s) — cheap for a pure-JS client like plain kafkajs, but not for a native
-(librdkafka-backed) one:
-
-1. **Memory grew unboundedly** from constantly constructing and tearing down native client
-   instances (each spins up real threads/connections).
-2. **Far worse, it could crash the whole process during a real failover.** When a "which cluster is
-   active" probe tried to reconnect to the *standby* cluster of a switchover pair (which Confluent
-   intentionally fences — see above) or to the global URL during its brief real outage window, the
-   connection attempt didn't just error or hang an async promise — it blocked **the Node.js event
-   loop itself** for long enough that the entire dashboard went unresponsive, and systemd
-   eventually killed and restarted the process. A JS-level `Promise.race` timeout does **not**
-   protect against this: if the blocking happens at the native/thread level, the event loop never
-   gets a turn to run the timeout's own callback either.
-3. **A secondary bug compounded it**: a `withTimeout()` helper used `Promise.race` without
-   attaching a trailing `.catch()` to the losing promise, so a late rejection from the abandoned
-   promise became an unhandled rejection — which crashes a Node process by default.
-
-**The fix, in two parts:**
-
-- **Never attempt a native Kafka connection to a cluster you aren't already confident is
-  reachable.** `monitor.js`'s `snapshot(activeSide)` takes the already-known active side as a
-  parameter and skips connecting to the other side entirely.
-- **Stop using a native Kafka connection to determine "which side is active" or "has the cutover
-  finished" at all.** That's derived entirely from the Switchover Management **REST** API (pure
-  HTTPS) in `server.js` — during an active cutover (`status.phase === 'UPDATING'`), it returns
-  `null` rather than guessing, and the dashboard shows "pending" until the pair reports a stable
-  state. Remaining native Kafka admin connections are long-lived and reused across polls instead of
-  recreated every time. The `withTimeout()` helper now attaches `promise.catch(() => {})` before
-  racing it, regardless of which branch wins.
-
-The lesson generalizes beyond this demo: **a native (librdkafka-backed) Kafka client is not a
-drop-in performance-equivalent replacement for a pure-JS one when it comes to short-lived,
-frequently-recreated connections** — treat connection construction as expensive, reuse
-connections, and never let a native client attempt to reach a target you don't already have
-independent (non-Kafka) evidence is reachable.
 
 ### Running it / redeploying
 
