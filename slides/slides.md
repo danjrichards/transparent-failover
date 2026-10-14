@@ -360,7 +360,7 @@ class: text-center
 ### Trigger Failover → watch the dashboard
 
 <!--
-Switch to the browser here: http://<your-demo-vm-ip>/
+Switch to the browser here: http://&lt;your-demo-vm-ip&gt;/
 -->
 
 ---
@@ -395,7 +395,7 @@ class: text-center
 # Questions?
 
 <div class="pt-8 text-sm opacity-60">
-Dashboard: http://<your-demo-vm-ip>/ &middot; Full build log and architecture notes in this
+Dashboard: http://&lt;your-demo-vm-ip&gt;/ &middot; Full build log and architecture notes in this
 project's README.md and COMMANDS.md
 </div>
 
