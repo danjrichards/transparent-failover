@@ -82,13 +82,6 @@ If your SSH access to the VM is blocked by policy in your environment, Azure's
 `az vm run-command invoke` lets you run shell commands on the VM without SSH (used throughout
 `COMMANDS.md` for exactly this reason).
 
-### Note: VM region vs. regional quota
-
-If the region you want for the VM has no vCPU quota headroom in your subscription, you can deploy
-it in the *other* region's VNet instead — peering + the DNS zone links above mean it still reaches
-both clusters privately either way. Request a quota increase if you specifically need it in a
-given region.
-
 ## Connecting from the VM
 
 Bootstrap servers / REST endpoints (resolve only from inside the peered VNets):
@@ -193,6 +186,8 @@ Note: `vite.config.ts` disables CSS minification for `pnpm build` — without it
 version's own bundled CSS crashes the `lightningcss` minifier. `pnpm dev` is unaffected.
 
 ## Demo app
+
+![Demo dashboard](docs/dashboard-screenshot.png)
 
 `demo-app/` — a small Node.js app (Express +
 [`@confluentinc/kafka-javascript`](https://github.com/confluentinc/confluent-kafka-javascript),
