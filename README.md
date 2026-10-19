@@ -339,6 +339,11 @@ az vm run-command invoke -g <resource-group> -n <vm-name> --command-id RunShellS
 "
 ```
 
+Application logs (producer, consumer and Kafka client output) can be viewed on the VM with a
+command like `sudo journalctl -u tf-demo -f`. Use your own systemd unit name if it differs. The
+Kafka client log level defaults to `INFO` and can be changed with the `KAFKA_LOG_LEVEL` env var
+(`NOTHING`, `ERROR`, `WARN`, `INFO` or `DEBUG`).
+
 The app and `node_modules` live on the VM, deployed via a base64-encoded tarball through
 `az vm run-command` (no SCP needed without SSH access). Full history of how the demo app was built
 is in `COMMANDS.md`.
