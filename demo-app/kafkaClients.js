@@ -6,7 +6,7 @@
 const { Kafka, logLevel } = require('@confluentinc/kafka-javascript').KafkaJS;
 const cfg = require('./config');
 
-function make(clientId, brokers) {
+function make(clientId, brokers, level = 'NOTHING') {
   return new Kafka({
     kafkaJS: {
       clientId,
@@ -16,14 +16,14 @@ function make(clientId, brokers) {
       connectionTimeout: 8000,
       requestTimeout: 12000,
       retry: { retries: 10, initialRetryTime: 300, maxRetryTime: 5000 },
-      logLevel: logLevel ? logLevel.NOTHING : undefined,
+      logLevel: logLevel ? logLevel[level] ?? logLevel.INFO : undefined,
     },
   });
 }
 
 // Long-lived: the producer and consumer talk ONLY to the global bootstrap URL. This is the
 // whole point of the demo -- the client config never changes across a failover.
-const kafkaGlobal = make('danr-tf-demo-global', cfg.globalBootstrap);
+const kafkaGlobal = make('danr-tf-demo-global', cfg.globalBootstrap, cfg.kafkaLogLevel);
 
 // Direct-to-cluster admin connections, used purely for the dashboard's side-by-side
 // primary/DR comparison (topic + consumer-group offsets, proof of mirroring). Real clients in

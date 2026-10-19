@@ -29,5 +29,7 @@ module.exports = {
 
   topic: process.env.TOPIC || 'danr-tf-orders',
   group: process.env.CONSUMER_GROUP || 'danr-tf-orders-consumer',
+  // NOTHING | ERROR | WARN | INFO | DEBUG -- applies to the producer/consumer (global) client only.
+  kafkaLogLevel: (process.env.KAFKA_LOG_LEVEL || 'INFO').toUpperCase(),
   producePerSec: parseInt(process.env.PRODUCE_RATE_PER_SEC || '10', 10),
 };
