@@ -49,11 +49,14 @@ async function requestBytes(clusterId) {
   const byType = latestByGroup(data, 'metric.type');
   const byTypeValues = {};
   let total = 0;
+  let ts = null;
   for (const [type, point] of Object.entries(byType)) {
     byTypeValues[type] = point.value;
     total += point.value;
+    if (!ts || point.timestamp > ts) ts = point.timestamp;
   }
   return {
+    ts,
     total,
     produce: byTypeValues.Produce ?? null,
     fetch: byTypeValues.Fetch ?? null,

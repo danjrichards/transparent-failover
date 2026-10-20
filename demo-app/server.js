@@ -26,10 +26,14 @@ const latest = {
   mirrorLagError: null,
 };
 
-// 30 samples at the 1-minute poll cadence below == 30 minutes of history, matching the Metrics
-// API's own 60s server-side sample rate (polling faster would just repeat the same sample).
+// 30 samples == 30 minutes of history. The Metrics API samples every 60s server-side but we poll
+// every 30s (to pick up each new sample sooner), so a history point is only added when the
+// sample's own timestamp changes -- otherwise every sample would be recorded twice.
 const MAX_METRICS_HISTORY = 30;
-function pushMetricsHistory(side, byType) {
+const lastHistorySampleTs = { primary: null, dr: null };
+function pushMetricsHistory(side, byType, sampleTs) {
+  if (sampleTs && sampleTs === lastHistorySampleTs[side]) return;
+  lastHistorySampleTs[side] = sampleTs;
   const arr = latest.metricsHistory[side];
   arr.push({ ts: Date.now(), byType: byType || {} });
   if (arr.length > MAX_METRICS_HISTORY) arr.shift();
@@ -145,8 +149,9 @@ function startPolling() {
   setInterval(pollRecoveryTrackers, 1000);
 }
 
-// The Metrics API samples every 60s server-side, so polling any faster than that would just
-// re-fetch the same sample -- this loop polls once a minute, in step with the API's own cadence.
+// The Metrics API samples every 60s server-side. This loop polls every 30s so a new sample shows
+// up in the UI within ~30s of being published rather than up to a minute later; the repeat
+// fetches in between return the same sample and are de-duplicated in pushMetricsHistory().
 async function pollMetricsOnce() {
   try {
     const [primary, dr] = await Promise.all([
@@ -154,8 +159,8 @@ async function pollMetricsOnce() {
       metrics.requestBytes(cfg.drClusterId).catch((e) => ({ error: e.message })),
     ]);
     latest.metrics = { primary, dr };
-    if (!primary.error) pushMetricsHistory('primary', primary.byType);
-    if (!dr.error) pushMetricsHistory('dr', dr.byType);
+    if (!primary.error) pushMetricsHistory('primary', primary.byType, primary.ts);
+    if (!dr.error) pushMetricsHistory('dr', dr.byType, dr.ts);
 
     // Mirror lag only means something on the standby side (the one holding the mirror copy of
     // the topic) -- querying the active side would just come back empty.
@@ -176,7 +181,7 @@ async function pollMetricsOnce() {
 
 function startMetricsPolling() {
   pollMetricsOnce();
-  setInterval(pollMetricsOnce, 60000);
+  setInterval(pollMetricsOnce, 30000);
 }
 
 const OP_LABELS = {
