@@ -57,8 +57,9 @@ layout: center
 10. Trigger a real failover
 
 **Wrap-up**
-11. Lessons learned
-12. Q&A
+11. Limitations
+12. Lessons learned
+13. Q&A
 
 </div>
 </div>
@@ -361,6 +362,48 @@ class: text-center
 
 <!--
 Switch to the browser here: http://&lt;your-demo-vm-ip&gt;/
+-->
+
+---
+
+# Limitations to know about
+
+From the [DR Automatic Failover tutorial](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/dr-automatic-failover-tutorial.html):
+
+<div class="grid grid-cols-2 gap-x-8 gap-y-4 pt-2 text-sm">
+<div>
+
+**Status & clusters**
+- Early Access: dev/test only, **not for production**
+- **Dedicated or Enterprise** only (no Basic, Standard, Freight)
+- Same organization; secondary must be **empty of clients** at pairing
+- Active-passive, **bidirectional** cluster link (`OUTBOUND` only)
+
+**Networking**
+- Pair endpoints of the **same type** (Private Link ↔ Private Link)
+- You provide the cross-region network path
+- Proxies must pass **SNI** unmodified
+
+</div>
+<div>
+
+**Clients & auth**
+- Kafka clients **4.0+**; no REST API clients
+- **OAuth or Global API keys** only (cluster-scoped keys can't fail over)
+- Producers rebootstrap after ~5 min by default (`metadata.recovery.rebootstrap.trigger.ms`)
+- RBAC role bindings must be created on **both** clusters
+
+**Not covered by failover**
+- Schema Registry, managed connectors, Flink, ksqlDB, Kafka Streams
+- Exactly-once transactions (hung transactions possible)
+- Connector offsets and cloud tags aren't replicated
+- Mirroring is async: unplanned failover can lose unmirrored data
+
+</div>
+</div>
+
+<!--
+Be upfront: this is Early Access and not for production. Source is the Confluent docs tutorial; re-check it before presenting, since EA constraints change.
 -->
 
 ---
